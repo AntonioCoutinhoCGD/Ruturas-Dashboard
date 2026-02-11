@@ -5,8 +5,8 @@ from pathlib import Path
 
 # Set the title and favicon that appear in the Browser's tab bar.
 st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
+    page_title='Ruturas',
+    page_icon='https://upload.wikimedia.org/wikipedia/commons/9/9c/CGD_Logo_2017.png', # This is an emoji shortcode. Could be a URL too.
 )
 
 # -----------------------------------------------------------------------------
