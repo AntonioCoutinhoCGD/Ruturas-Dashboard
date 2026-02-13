@@ -245,161 +245,89 @@ def today_and_ma7(df_daily: pd.DataFrame, fonte_tab: str, canal: str, metrica: s
     """
     if fonte_tab == "GERAL":
         # soma das fontes
-        df_today = df_daily[(df_daily["Data"] == ref_date) & (df_daily["Canal"] == canal) & (df_daily["Metrica"] == metrica)]
+        df_today = df_daily[
+            (df_daily["Data"] == ref_date) &
+            (df_daily["Canal"] == canal) &
+            (df_daily["Metrica"] == metrica)
+        ]
         v_hoje = float(df_today.groupby("Data")["Valor"].sum().sum())
 
-        df_hist = df_daily[(df_daily["Data"] < ref_date) & (df_daily["Canal"] == canal) & (df_daily["Metrica"] == metrica)]
+        df_hist = df_daily[
+            (df_daily["Data"] < ref_date) &
+            (df_daily["Canal"] == canal) &
+            (df_daily["Metrica"] == metrica)
+        ]
         s_hist = df_hist.groupby("Data")["Valor"].sum().sort_index()
         m7 = ma7_from_series(s_hist)
     else:
         df_today = df_daily[
-            (df_daily["Data"] == ref_date)
-            & (df_daily["Fonte"] == fonte_tab)
-            & (df_daily["Canal"] == canal)
-            & (df_daily["Metrica"] == metrica)
+            (df_daily["Data"] == ref_date) &
+            (df_daily["Fonte"] == fonte_tab) &
+            (df_daily["Canal"] == canal) &
+            (df_daily["Metrica"] == metrica)
         ]
         v_hoje = float(df_today["Valor"].sum())
 
         df_hist = df_daily[
-            (df_daily["Data"] < ref_date)
-            & (df_daily["Fonte"] == fonte_tab)
-            & (df_daily["Canal"] == canal)
-            & (df_daily["Metrica"] == metrica)
+            (df_daily["Data"] < ref_date) &
+            (df_daily["Fonte"] == fonte_tab) &
+            (df_daily["Canal"] == canal) &
+            (df_daily["Metrica"] == metrica)
         ].sort_values("Data")
         m7 = ma7_from_series(df_hist["Valor"])
     return v_hoje, m7
 
-def format_delta(v, m):
-    if pd.isna(m):
-        return None
-    d = v - m
-    sign = "+" if d >= 0 else ""
-    return f"{sign}{int(round(d))}"
-
-# --- NOVO: cartão KPI lado a lado (GERAL em destaque + detalhe ATM/VTM) ---
-CARD_CSS = """
-<style>
-.kpi-card {
-  background: #ffffff;
-  border: 1px solid #eee;
-  border-radius: 16px;
-  padding: 16px 18px;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
-  height: 100%;
-}
-.kpi-title {
-  font-weight: 600;
-  font-size: 15px;
-  color: #333;
-  margin-bottom: 6px;
-}
-.kpi-main {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-.kpi-main-value {
-  font-size: 32px;
-  font-weight: 700;
-  color: #111;
-  line-height: 1.0;
-}
-.kpi-delta {
-  font-size: 14px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: #f2f4f7;
-  color: #333;
-}
-.kpi-delta.pos { background: #f0f9ff; color: #026aa7; }   /* + */
-.kpi-delta.neg { background: #fff1f1; color: #b42318; }   /* - */
-.kpi-subtitle {
-  margin-top: 10px;
-  font-size: 12px;
-  color: #667085;
-}
-.kpi-detail {
-  display: flex;
-  gap: 8px;
-  margin-top: 6px;
-}
-.kpi-chip {
-  background: #f8fafc;
-  border: 1px solid #eef2f7;
-  border-radius: 10px;
-  padding: 6px 8px;
-  font-size: 12px;
-  color: #344054;
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-}
-.kpi-chip strong { font-weight: 700; color: #111827; }
-</style>
-"""
-
-st.markdown(CARD_CSS, unsafe_allow_html=True)
-
-def render_kpi_card(title: str, geral_val: float, geral_m7: float,
-                    atm_val: float, atm_m7: float,
-                    vtm_val: float, vtm_m7: float):
-    delta_g = format_delta(geral_val, geral_m7)
-    delta_a = format_delta(atm_val, atm_m7)
-    delta_v = format_delta(vtm_val, vtm_m7)
-    cls_g = "pos" if (delta_g and delta_g.startswith("+")) else ("neg" if delta_g else "")
-    cls_a = "pos" if (delta_a and delta_a.startswith("+")) else ("neg" if delta_a else "")
-    cls_v = "pos" if (delta_v and delta_v.startswith("+")) else ("neg" if delta_v else "")
-
-    html = f"""
-    <div class="kpi-card">
-      <div class="kpi-title">{title} — <span style="color:#0f172a;">GERAL</span></div>
-      <div class="kpi-main">
-        <div class="kpi-main-value">{int(geral_val)}</div>
-        {f'<div class="kpi-delta {cls_g}">{delta_g}</div>' if delta_g else ""}
-      </div>
-      <div class="kpi-subtitle">Detalhe por canal (ATM &amp; VTM)</div>
-      <div class="kpi-detail">
-        <div class="kpi-chip">ATM: <strong>{int(atm_val)}</strong> {f'<span class="kpi-delta {cls_a}">{delta_a}</span>' if delta_a else ''}</div>
-        <div class="kpi-chip">VTM: <strong>{int(vtm_val)}</strong> {f'<span class="kpi-delta {cls_v}">{delta_v}</span>' if delta_v else ''}</div>
-      </div>
-    </div>
-    """
-    st.markdown(html, unsafe_allow_html=True)
+def render_main_kpi(metrica: str, v_geral: float, m7_geral: float):
+    """Mostra KPI principal (GERAL) com delta vs M7 (inverse)."""
+    delta = None if pd.isna(m7_geral) else f"{'+' if (v_geral - m7_geral) >= 0 else ''}{int(round(v_geral - m7_geral))}"
+    st.metric(metrica, int(v_geral), delta=delta, delta_color="inverse" if delta else "off")
 
 # -----------------------------------------------------------------------------
-# KPIs — Tabs: Geral → Agências → Fornecedores (Esegur)
-# Em cada tab: 3 cartões lado a lado com GERAL como destaque e detalhe ATM/VTM
+# KPIs — Destaque GERAL (soma ATM+VTM) + detalhe estético ATM/VTM em expander
 # -----------------------------------------------------------------------------
 st.header(f"Indicadores — {last_date.date().isoformat()}")
 
 tab_geral, tab_ag, tab_for = st.tabs([DISPLAY_FONTE["GERAL"], DISPLAY_FONTE["Agências"], DISPLAY_FONTE["Esegur"]])
 
+# Em cada tab: mostrar KPIs da soma (Canal="GERAL") como destaque
 for tab, fonte_tab in zip([tab_geral, tab_ag, tab_for], ["GERAL", "Agências", "Esegur"]):
     with tab:
-        # verificar se há dados para o dia em questão
         if fonte_tab == "GERAL":
-            sub_today = df_daily[(df_daily["Data"] == last_date)]
+            sub_today = df_daily[(df_daily["Data"] == last_date) & (df_daily["Canal"] == "GERAL")]
         else:
-            sub_today = df_daily[(df_daily["Data"] == last_date) & (df_daily["Fonte"] == fonte_tab)]
+            sub_today = df_daily[
+                (df_daily["Data"] == last_date) &
+                (df_daily["Fonte"] == fonte_tab) &
+                (df_daily["Canal"] == "GERAL")
+            ]
         if sub_today.empty:
             st.info(f"Sem dados para {DISPLAY_FONTE[fonte_tab]} no dia {last_date.date().isoformat()}.")
             continue
 
-        cols_row = st.columns(3)
-        for col, metrica in zip(cols_row, ["Ruturas","Indisponiveis","Anomalias"]):
-            # valores GERAL, ATM, VTM + MA7
-            v_g, m7_g = today_and_ma7(df_daily, fonte_tab, "GERAL", metrica, last_date)
-            v_a, m7_a = today_and_ma7(df_daily, fonte_tab, "ATM",   metrica, last_date)
-            v_v, m7_v = today_and_ma7(df_daily, fonte_tab, "VTM",   metrica, last_date)
-            with col:
-                render_kpi_card(metrica, v_g, m7_g, v_a, m7_a, v_v, m7_v)
+        # KPIs principais (sem "— GERAL" nos títulos)
+        cols = st.columns(3)
+        for metrica, cc in zip(["Ruturas","Indisponiveis","Anomalias"], cols):
+            v_geral, m7_geral = today_and_ma7(df_daily, fonte_tab, "GERAL", metrica, last_date)
+            with cc:
+                render_main_kpi(metrica, v_geral, m7_geral)
 
+        # Detalhe estético por canal (ATM/VTM) num expander
+        with st.expander("Detalhe por canal (ATM / VTM)"):
+            c1, c2, c3 = st.columns(3)
+            for metrica, cont in zip(["Ruturas","Indisponiveis","Anomalias"], [c1, c2, c3]):
+                v_atm, m7_atm = today_and_ma7(df_daily, fonte_tab, "ATM", metrica, last_date)
+                v_vtm, m7_vtm = today_and_ma7(df_daily, fonte_tab, "VTM", metrica, last_date)
+                with cont:
+                    st.caption(f"**{metrica}**")
+                    d_atm = None if pd.isna(m7_atm) else f"{'+' if (v_atm - m7_atm) >= 0 else ''}{int(round(v_atm - m7_atm))}"
+                    d_vtm = None if pd.isna(m7_vtm) else f"{'+' if (v_vtm - m7_vtm) >= 0 else ''}{int(round(v_vtm - m7_vtm))}"
+                    st.metric("ATM", int(v_atm), delta=d_atm, delta_color="inverse" if d_atm else "off")
+                    st.metric("VTM", int(v_vtm), delta=d_vtm, delta_color="inverse" if d_vtm else "off")
         st.markdown("---")
 
 # -----------------------------------------------------------------------------
 # Evolução diária — escolher Fonte (Geral/Agências/Fornecedores) e Métrica,
-# mostrar três linhas: ATM, VTM e GERAL (ATM+VTM)
+# mostrar três linhas: ATM, VTM e GERAL (soma)
 # -----------------------------------------------------------------------------
 st.header("Evolução diária")
 fonte_sel_label = st.radio("Fonte", [DISPLAY_FONTE["GERAL"], DISPLAY_FONTE["Agências"], DISPLAY_FONTE["Esegur"]],
@@ -409,17 +337,21 @@ label_to_internal = {v: k for k, v in DISPLAY_FONTE.items()}
 fonte_sel = label_to_internal[fonte_sel_label]
 met_sel = st.selectbox("Métrica", ["Ruturas","Indisponiveis","Anomalias"], index=0)
 
-# Construir dados incluindo GERAL
 if fonte_sel == "GERAL":
-    # soma das fontes; queremos ATM, VTM e GERAL
-    df_chart_base = df_daily[(df_daily["Metrica"] == met_sel) & (df_daily["Canal"].isin(["ATM","VTM","GERAL"]))]
-    df_chart = df_chart_base.groupby(["Data","Canal"], as_index=False)["Valor"].sum()
+    # Somar fontes para ATM/VTM e manter GERAL (soma final)
+    base = df_daily[(df_daily["Metrica"] == met_sel) & (df_daily["Canal"].isin(["ATM","VTM","GERAL"]))].copy()
+    # ATM/VTM: somar por data e canal; GERAL já existe como soma por fonte (vamos somar também por data)
+    df_atm_vtm = (base[base["Canal"].isin(["ATM","VTM"])]
+                  .groupby(["Data", "Canal"], as_index=False)["Valor"].sum())
+    df_all = (base[base["Canal"] == "GERAL"]
+              .groupby(["Data"], as_index=False)["Valor"].sum().assign(Canal="GERAL"))
+    df_chart = pd.concat([df_atm_vtm, df_all], ignore_index=True)
 else:
     df_chart = df_daily[
         (df_daily["Fonte"] == fonte_sel)
         & (df_daily["Metrica"] == met_sel)
         & (df_daily["Canal"].isin(["ATM","VTM","GERAL"]))
-    ]
+    ].groupby(["Data","Canal"], as_index=False)["Valor"].sum()
 
 if df_chart.empty:
     st.info("Sem dados para o filtro escolhido.")
@@ -430,7 +362,7 @@ else:
         .encode(
             x=alt.X("Data:T", title="Data", axis=alt.Axis(format="%Y-%m-%d")),
             y=alt.Y("Valor:Q", title="Valor"),
-            color=alt.Color("Canal:N", title=None, scale=alt.Scale(scheme="category10")),
+            color=alt.Color("Canal:N", title=None, scale=alt.Scale(scheme="tableau10")),
             tooltip=[alt.Tooltip("Data:T", title="Data", format="%Y-%m-%d"),
                      alt.Tooltip("Canal:N", title="Canal"),
                      alt.Tooltip("Valor:Q", title=met_sel, format=".0f")]
@@ -439,7 +371,7 @@ else:
     st.altair_chart(chart, use_container_width=True)
 
 # -----------------------------------------------------------------------------
-# JUSTIFICAÇÕES — Matriz diária (geral) + Split por Fonte (via registos)
+# JUSTIFICAÇÕES — Matriz diária (geral) + Gráfico (Agências) via registos
 # -----------------------------------------------------------------------------
 st.header("Justificações")
 
@@ -473,7 +405,7 @@ else:
                     use_container_width=True, hide_index=True
                 )
 
-    # Acumulado por período (geral)
+    # Acumulado por período (exclui 'Sem justificação')
     st.subheader("Acumulado por período (geral)")
     periodo = st.selectbox("Período", ["1 semana", "Mês", "Ano", "1-3 Anos"], index=1, key="per_just")
     days_map = {"1 semana": 7, "Mês": 30, "Ano": 365, "1-3 Anos": 365*3}
@@ -491,17 +423,16 @@ else:
     total_just = dfj_win[cols_sum].sum().sort_values(ascending=False)
     st.bar_chart(total_just)
 
-# 2) Split por Fonte (via registos detalhados)
-st.subheader("Justificações por Fonte (registos detalhados)")
-
+# 2) Gráfico — Justificações só das Agências (registos detalhados) — remover Esegur e tabelas
+st.subheader("Justificações — Agências (registos detalhados)")
 if (df_events is None) or df_events.empty or ("Justificacao" not in df_events.columns):
-    st.info("Sem registos detalhados para calcular este split.")
+    st.info("Sem registos detalhados para calcular este gráfico.")
 else:
     col1, col2 = st.columns(2)
     with col1:
-        periodo_ev = st.selectbox("Período", ["Tudo", "1 semana", "Mês", "Ano", "1-3 Anos"], index=2, key="per_ev")
+        periodo_ev = st.selectbox("Período", ["Tudo", "1 semana", "Mês", "Ano", "1-3 Anos"], index=2, key="per_ev_ag_only")
     with col2:
-        excluir_sem = st.checkbox("Excluir 'Sem justificação'", value=True)
+        excluir_sem = st.checkbox("Excluir 'Sem justificação'", value=True, key="excluir_sem_ag_only")
 
     def filtro_periodo(df, periodo_label: str):
         days_map2 = {"1 semana": 7, "Mês": 30, "Ano": 365, "1-3 Anos": 365*3, "Tudo": None}
@@ -512,34 +443,35 @@ else:
         start_d = end_d - pd.Timedelta(days=dias2-1)
         return df[(df["Data"] >= start_d) & (df["Data"] <= end_d)].copy()
 
-    ev = filtro_periodo(df_events.copy(), periodo_ev)
+    ev = df_events.copy()
+    # Filtrar apenas Agências
+    ev = ev[ev["Fonte"] == "Agências"]
+
+    # Aplicar janela temporal
+    ev = filtro_periodo(ev, periodo_ev)
+
+    # >>> Correção robusta para "Sem justificação" (evitar KeyError/booleans)
     if excluir_sem and "Justificacao" in ev.columns:
-        # CORREÇÃO ROBUSTA AO ERRO KeyError: True
-        ev = ev[~ev["Justificacao"].astype(str).fillna("").apply(normalize_text_pt).eq("sem justificacao")]
+        ev = ev[~ev["Justificacao"].fillna("").astype(str).apply(normalize_text_pt).eq("sem justificacao")]
 
-    top_by_fonte = (
-        ev.groupby(["Fonte","Justificacao"], dropna=False).size()
-          .rename("Ocorrencias").reset_index()
-    )
-
-    cA, cB = st.columns(2)
-    for fonte_internal, col in zip(["Agências","Esegur"], [cA, cB]):
-        sub = (top_by_fonte[top_by_fonte["Fonte"]==fonte_internal]
-               .sort_values("Ocorrencias", ascending=False).head(10))
-        with col:
-            st.markdown(f"**{DISPLAY_FONTE[fonte_internal]}** — Top justificações")
-            chart = (
-                alt.Chart(sub)
-                .mark_bar()
-                .encode(
-                    x=alt.X("Ocorrencias:Q", title="Ocorrências"),
-                    y=alt.Y("Justificacao:N", title=None, sort="-x"),
-                    tooltip=["Justificacao:N", alt.Tooltip("Ocorrencias:Q", title="Ocorrências")]
-                ).properties(height=280)
-            )
-            st.altair_chart(chart, use_container_width=True)
-            with st.expander("Ver tabela"):
-                st.dataframe(sub, use_container_width=True, hide_index=True)
+    if ev.empty:
+        st.info("Sem registos para os filtros.")
+    else:
+        top_by_ag = (
+            ev.groupby(["Justificacao"], dropna=False).size()
+              .rename("Ocorrencias").reset_index()
+              .sort_values("Ocorrencias", ascending=False).head(10)
+        )
+        chart_ag = (
+            alt.Chart(top_by_ag)
+            .mark_bar(color="#4C78A8")
+            .encode(
+                x=alt.X("Ocorrencias:Q", title="Ocorrências"),
+                y=alt.Y("Justificacao:N", title=None, sort="-x"),
+                tooltip=["Justificacao:N", alt.Tooltip("Ocorrencias:Q", title="Ocorrências")]
+            ).properties(height=280)
+        )
+        st.altair_chart(chart_ag, use_container_width=True)
 
 # -----------------------------------------------------------------------------
 # Top 5 piores agências (nº de ocorrências) — exclui Fornecedores (Esegur)
@@ -556,7 +488,7 @@ else:
         just_opts2 = ["Todas"] + sorted([j for j in df_events["Justificacao"].dropna().unique()]) if "Justificacao" in df_events.columns else ["Todas"]
         just_sel2 = st.selectbox("Justificação", just_opts2, index=0, key="just_top")
 
-    def filtro_periodo(df, periodo_label: str):
+    def filtro_periodo_top(df, periodo_label: str):
         days_map = {"1 semana": 7, "Mês": 30, "Ano": 365, "1-3 Anos": 365*3, "Tudo": None}
         dias = days_map[periodo_label]
         if dias is None or "Data" not in df.columns or df["Data"].dropna().empty:
@@ -568,7 +500,7 @@ else:
     top_df = df_events.copy()
     # Excluir Fornecedores (Esegur)
     top_df = top_df[top_df["Fonte"] == "Agências"]
-    top_df = filtro_periodo(top_df, periodo_top)
+    top_df = filtro_periodo_top(top_df, periodo_top)
     if just_sel2 != "Todas" and "Justificacao" in top_df.columns:
         top_df = top_df[top_df["Justificacao"] == just_sel2]
 
