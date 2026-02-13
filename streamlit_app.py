@@ -10,27 +10,23 @@ LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/9/9c/CGD_Logo_2017.pn
 
 st.set_page_config(
     page_title="Ruturas Dashboard",
-    page_icon=LOGO_URL,   # ícone da página = logotipo da Caixa
+    page_icon=LOGO_URL,
     layout="wide",
 )
 
-# Título com logo ao lado
+# Título com logo
 c_logo, c_title = st.columns([0.12, 0.88])
 with c_logo:
     st.image(LOGO_URL, width=72)
 with c_title:
     st.markdown("<h1 style='margin-bottom:0;'>Ruturas Dashboard</h1>", unsafe_allow_html=True)
-
-# Texto minimal
 st.write("Carrega um ficheiro CSV")
 
 # -----------------------------------------------------------------------------
 # Helpers / Constantes
 # -----------------------------------------------------------------------------
-MAIN_COLS = ["Data", "Ruturas", "Indisponiveis", "Anomalias"]
-
 def base_name(colname: str) -> str:
-    """Nome base da coluna (remove sufixos pandas .1, .2), trim e minúsculas."""
+    """Remove sufixos pandas .1, .2 e devolve lowercase trim."""
     return str(colname).strip().split(".", 1)[0].lower()
 
 def normalize_text_pt(s: str) -> str:
@@ -38,131 +34,30 @@ def normalize_text_pt(s: str) -> str:
     repl = str.maketrans("áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ", "aaaaeeiooouucAAAAEEIOOOUUC")
     return str(s).translate(repl).strip().lower()
 
-def find_first_col_by_base(cols, target_base: str) -> str | None:
-    tb = target_base.lower()
-    for c in cols:
-        if base_name(c) == tb:
-            return c
-    return None
+def base_norm(colname: str) -> str:
+    return normalize_text_pt(base_name(colname))
 
-def normalize_main(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normaliza a tabela principal (Data, Ruturas, Indisponiveis, Anomalias),
-    garantindo tipos corretos, retirando horas e preenchendo zeros para colunas em falta.
-    """
-    cols = df.columns.tolist()
-    data_col = find_first_col_by_base(cols, "data")
-    if data_col is None:
-        raise ValueError("Falta a coluna 'Data' na tabela principal.")
+EXPECTED_BASENORMS = [
+    "ruturas vtm", "indisponiveis vtm", "anomalias vtm",
+    "ruturas atm", "indisponiveis atm", "anomalias atm",
+]
 
-    keep = [data_col]
-    for c in ["Ruturas","Indisponiveis","Anomalias"]:
-        if c in cols:
-            keep.append(c)
-
-    out = df[keep].copy()
-    out.rename(columns={data_col: "Data"}, inplace=True)
-
-    for c in ["Ruturas","Indisponiveis","Anomalias"]:
-        if c not in out.columns:
-            out[c] = 0
-
-    out["Data"] = pd.to_datetime(out["Data"], errors="coerce").dt.normalize()
-    for c in ["Ruturas","Indisponiveis","Anomalias"]:
-        out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0)
-
-    out = out.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
-    return out
-
-def normalize_just_block(df_right: pd.DataFrame):
-    """
-    Normaliza o bloco central de justificações (Data + categorias).
-    Aceita qualquer número de categorias; datas sem horas.
-    """
-    if df_right is None or df_right.empty:
-        return None, False
-
-    dfj = df_right.copy()
-    dfj.columns = [str(c).strip() for c in dfj.columns]
-
-    data_col = find_first_col_by_base(dfj.columns, "data")
-    if data_col is None:
-        # sem Data -> não conseguimos distribuir por dia
-        for c in dfj.columns:
-            dfj[c] = pd.to_numeric(dfj[c], errors="coerce").fillna(0)
-        if "Registo" not in dfj.columns:
-            dfj.insert(0, "Registo", np.arange(1, len(dfj)+1))
-        return dfj, False
-
-    if data_col != "Data":
-        dfj.rename(columns={data_col: "Data"}, inplace=True)
-
-    dfj["Data"] = pd.to_datetime(dfj["Data"], errors="coerce").dt.normalize()
-    dfj = dfj.dropna(subset=["Data"])
-
-    cat_cols = [c for c in dfj.columns if c != "Data"]
-    for c in cat_cols:
-        dfj[c] = pd.to_numeric(dfj[c], errors="coerce").fillna(0)
-    return dfj, True
-
-def normalize_events_block(df_events: pd.DataFrame) -> pd.DataFrame | None:
-    """
-    Normaliza o bloco à direita (Registos detalhados): Data, Hora, Agencia, Justificação.
-    (Data normalizada, Hora convertida para inteiro 0..23 em 'Hora_int')
-    """
-    if df_events is None or df_events.empty:
-        return None
-
-    # Mapear nomes (tolerante a espaços/acentos/capitalização)
-    rename_map = {}
-    for c in df_events.columns:
-        n = normalize_text_pt(c)
-        if n == "data":
-            rename_map[c] = "Data"
-        elif n == "hora":
-            rename_map[c] = "Hora"
-        elif n == "agencia":
-            rename_map[c] = "Agencia"
-        elif n.startswith("justific"):
-            rename_map[c] = "Justificacao"
-    dfe = df_events.rename(columns=rename_map)
-
-    keep = [c for c in ["Data","Hora","Agencia","Justificacao"] if c in dfe.columns]
-    if not keep:
-        return None
-
-    dfe = dfe[keep].copy()
-    if "Data" in dfe.columns:
-        dfe["Data"] = pd.to_datetime(dfe["Data"], errors="coerce").dt.normalize()
-
-    # Converter Hora para HH:MM:SS e extrair hora inteira 0..23
-    if "Hora" in dfe.columns:
-        hora_dt = pd.to_datetime(dfe["Hora"], errors="coerce", format="%H:%M:%S")
-        bad = hora_dt.isna() & dfe["Hora"].notna()
-        if bad.any():
-            hora_dt.loc[bad] = pd.to_datetime("1900-01-01 " + dfe.loc[bad, "Hora"].astype(str), errors="coerce")
-        dfe["Hora_int"] = hora_dt.dt.hour
-
-    return dfe.dropna(how="all")
-
-def find_sem_just_col(cols) -> str | None:
-    targets = ["sem justificacao", "sem justificação"]
-    for c in cols:
-        n = normalize_text_pt(c)
-        if n in targets or n.startswith("sem justific"):
-            return c
-    return None
+DISPLAY_FONTE = {
+    "GERAL": "Geral",
+    "Agências": "Agências",
+    "Esegur": "Fornecedores",  # display name pedido
+}
 
 # -----------------------------------------------------------------------------
-# Leitura robusta do upload (CSV com 3 blocos na mesma sheet)
+# Leitura e normalização segundo o novo layout (Agências + Esegur + Just/Registos)
 # -----------------------------------------------------------------------------
-def read_uploaded_csv(file):
+def read_uploaded_csv_v2(file):
     """
-    Lê CSV (sep=';', header=1) com a estrutura:
-      [MAIN: Data,Ruturas,Indisponiveis,Anomalias] ; [JUST: Data + categorias...] ; [EVENTS: Data,Hora,Agencia,Justificação]
-    Detecta automaticamente as 3 posições de 'Data' (1ª=main, 2ª=just, 3ª=events).
+    Novo CSV: [DATA + MÉTRICAS Agências (VTM/ATM)] + [MÉTRICAS Esegur (VTM/ATM)] +
+              [DATA + Justificações] + [DATA + Registos detalhados]
+    header=1 para ler a segunda linha como nomes de coluna.
     """
-    # tentar UTF-8 → fallback Latin-1
+    # tentar UTF-8 -> fallback Latin-1
     try:
         df = pd.read_csv(file, sep=";", header=1, engine="python")
     except UnicodeDecodeError:
@@ -172,34 +67,149 @@ def read_uploaded_csv(file):
     df.columns = [str(c).strip() for c in df.columns]
     cols = df.columns.tolist()
 
-    # Localizar todas as colunas cujo "base" é 'data' (ex.: 'Data', 'Data.1', 'Data.2')
+    # Localizar todas as posições de 'Data'
     bases = [base_name(c) for c in cols]
     data_positions = [i for i, b in enumerate(bases) if b == "data"]
 
-    # MAIN — usar a 1ª 'Data' + colunas conhecidas
-    left_data_col = find_first_col_by_base(cols, "data")
-    main_candidates = [left_data_col] if left_data_col else []
-    for c in ["Ruturas","Indisponiveis","Anomalias"]:
-        if c in cols:
-            main_candidates.append(c)
-    df_main = normalize_main(df[main_candidates]) if main_candidates else None
+    if len(data_positions) < 2:
+        raise ValueError("Estrutura inesperada: esperava pelo menos 2 colunas 'Data'.")
 
-    # JUST — começa na 2ª 'Data' (se existir) e termina na 3ª 'Data' (exclusivo)
+    # ---------------------- BLOCO PRINCIPAL (Agências + Esegur) ----------------------
+    start_main = data_positions[0]
+    end_main = data_positions[1]
+    df_mainblk = df.iloc[:, start_main:end_main].copy()
+
+    # A primeira coluna deve ser 'Data'. Normalizar datas.
+    data_col = df_mainblk.columns[0]
+    df_mainblk.rename(columns={data_col: "Data"}, inplace=True)
+    df_mainblk["Data"] = pd.to_datetime(df_mainblk["Data"], errors="coerce").dt.normalize()
+    df_mainblk = df_mainblk.dropna(subset=["Data"]).reset_index(drop=True)
+
+    # Mapear colunas duplicadas: 1ª ocorrência -> Agências; 2ª -> Esegur
+    occ_map = {bn: [] for bn in EXPECTED_BASENORMS}
+    for c in df_mainblk.columns[1:]:
+        bn = base_norm(c)
+        if bn in occ_map:
+            occ_map[bn].append(c)
+
+    def colmeta_from_basename(bn: str):
+        # "ruturas vtm" -> ("VTM","Ruturas")
+        parts = bn.split()
+        metrica = parts[0].capitalize()      # Ruturas / Indisponiveis / Anomalias
+        canal = parts[-1].upper()            # VTM / ATM
+        return canal, metrica
+
+    map_agencias = {}
+    map_esegur = {}
+    for bn, col_list in occ_map.items():
+        canal, metrica = colmeta_from_basename(bn)
+        if len(col_list) >= 1:
+            map_agencias[col_list[0]] = (canal, metrica)
+        if len(col_list) >= 2:
+            map_esegur[col_list[1]] = (canal, metrica)
+
+    def melt_fonte(df_blk: pd.DataFrame, map_cols: dict, fonte_label: str) -> pd.DataFrame:
+        if not map_cols:
+            return pd.DataFrame(columns=["Data","Fonte","Canal","Metrica","Valor"])
+        keep = ["Data"] + list(map_cols.keys())
+        dfx = df_blk[keep].copy()
+        dfl = dfx.melt(id_vars=["Data"], var_name="Col", value_name="Valor")
+        dfl["Fonte"] = fonte_label
+        dfl[["Canal","Metrica"]] = dfl["Col"].apply(lambda c: pd.Series(map_cols[c]))
+        dfl.drop(columns=["Col"], inplace=True)
+        dfl["Valor"] = pd.to_numeric(dfl["Valor"], errors="coerce").fillna(0)
+        return dfl[["Data","Fonte","Canal","Metrica","Valor"]]
+
+    df_ag = melt_fonte(df_mainblk, map_agencias, "Agências")
+    df_es = melt_fonte(df_mainblk, map_esegur, "Esegur")
+
+    # Se Esegur não existir no CSV para alguma métrica, criar zeros (mesmas datas/categorias)
+    if df_es.empty and not df_ag.empty:
+        uniq = df_ag[["Data","Canal","Metrica"]].drop_duplicates()
+        uniq["Fonte"] = "Esegur"
+        uniq["Valor"] = 0
+        df_es = uniq[["Data","Fonte","Canal","Metrica","Valor"]].copy()
+
+    df_daily = pd.concat([df_ag, df_es], ignore_index=True)
+
+    # Adicionar linha "GERAL" (ATM+VTM) por Fonte e Métrica
+    df_geral = (
+        df_daily.groupby(["Data","Fonte","Metrica"], as_index=False)["Valor"].sum()
+                .assign(Canal="GERAL")
+                .loc[:, ["Data","Fonte","Canal","Metrica","Valor"]]
+    )
+    df_daily = pd.concat([df_daily, df_geral], ignore_index=True)
+
+    # ---------------------- BLOCO JUSTIFICAÇÕES (matriz diária) ----------------------
     df_just, just_has_date = None, False
-    if len(data_positions) >= 2:
+    try:
         start_j = data_positions[1]
         end_j = data_positions[2] if len(data_positions) >= 3 else len(cols)
-        df_right = df.iloc[:, start_j:end_j]
-        df_just, just_has_date = normalize_just_block(df_right)
+        df_right = df.iloc[:, start_j:end_j].copy()
+        df_right.columns = [str(c).strip() for c in df_right.columns]
 
-    # EVENTS — começa na 3ª 'Data' (se existir) até ao fim
+        data_col_j = None
+        for c in df_right.columns:
+            if base_name(c) == "data":
+                data_col_j = c
+                break
+
+        if data_col_j:
+            df_right.rename(columns={data_col_j: "Data"}, inplace=True)
+            df_right["Data"] = pd.to_datetime(df_right["Data"], errors="coerce").dt.normalize()
+            df_right = df_right.dropna(subset=["Data"])
+            for c in [c for c in df_right.columns if c != "Data"]:
+                df_right[c] = pd.to_numeric(df_right[c], errors="coerce").fillna(0)
+            df_just = df_right.copy()
+            just_has_date = True
+        else:
+            for c in df_right.columns:
+                df_right[c] = pd.to_numeric(df_right[c], errors="coerce").fillna(0)
+            df_just = df_right.copy()
+            just_has_date = False
+    except Exception:
+        df_just, just_has_date = None, False
+
+    # ---------------------- BLOCO EVENTOS DETALHADOS ----------------------
     df_events = None
     if len(data_positions) >= 3:
         start_e = data_positions[2]
-        df_events_blk = df.iloc[:, start_e:]
-        df_events = normalize_events_block(df_events_blk)
+        df_events_blk = df.iloc[:, start_e:].copy()
 
-    return df_main, df_just, just_has_date, df_events
+        rename_map = {}
+        for c in df_events_blk.columns:
+            n = normalize_text_pt(c)
+            if n == "data":
+                rename_map[c] = "Data"
+            elif n.startswith("hora"):
+                rename_map[c] = "Hora_" + c.split()[1] if len(c.split()) > 1 else "Hora"
+            elif "duracao" in n:
+                rename_map[c] = "Duracao_" + str(len(rename_map))
+            elif n in ("agencia/empresa", "agencia/ empresa", "agenciaempresa", "agencia_empresa"):
+                rename_map[c] = "AgenciaEmpresa"
+            elif n.startswith("maquina"):
+                rename_map[c] = "Maquina"
+            elif n.startswith("justific"):
+                rename_map[c] = "Justificacao"
+
+        dfe = df_events_blk.rename(columns=rename_map)
+        keep = [c for c in ["Data","AgenciaEmpresa","Maquina","Justificacao"] if c in dfe.columns]
+        if keep:
+            dfe = dfe[keep].copy()
+            if "Data" in dfe.columns:
+                dfe["Data"] = pd.to_datetime(dfe["Data"], errors="coerce").dt.normalize()
+
+            # Classificação da Fonte a partir de AgenciaEmpresa
+            if "AgenciaEmpresa" in dfe.columns:
+                dfe["Fonte"] = np.where(
+                    dfe["AgenciaEmpresa"].fillna("").str.strip().str.lower() == "esegur",
+                    "Esegur", "Agências"
+                )
+            df_events = dfe.dropna(how="all")
+        else:
+            df_events = None
+
+    return df_daily, df_just, just_has_date, df_events
 
 # -----------------------------------------------------------------------------
 # Upload
@@ -209,254 +219,335 @@ if not file:
     st.info("A aguardar ficheiro…")
     st.stop()
 
-df_main, df_just, just_has_date, df_events = read_uploaded_csv(file)
-if df_main is None:
-    st.error("Não consegui ler a tabela principal (Data, Ruturas, Indisponiveis, Anomalias).")
+try:
+    df_daily, df_just, just_has_date, df_events = read_uploaded_csv_v2(file)
+except Exception as e:
+    st.error(f"Erro a ler o CSV: {e}")
     st.stop()
 
 st.success("Dados carregados com sucesso.")
 
 # -----------------------------------------------------------------------------
-# KPIs — mostrar a DATA e delta simples (+N / -N) vs MA7 (exclui o dia atual)
+# Utilitários de KPIs
 # -----------------------------------------------------------------------------
-last_date_main = df_main["Data"].max()
-st.header(f"Indicadores — {last_date_main.date().isoformat()}")
+last_date = df_daily["Data"].max()
 
-def ma7_excluindo_hoje(series_col: pd.Series, ref_date: pd.Timestamp) -> float:
-    hist = df_main.loc[df_main["Data"] < ref_date, series_col.name]
-    return float(hist.tail(7).mean()) if not hist.empty else float("nan")
+def ma7_from_series(s: pd.Series) -> float:
+    """Média móvel de 7 (excluindo o dia de referência; já deve ser filtrado)."""
+    return float(s.tail(7).mean()) if not s.empty else float("nan")
 
-last_row = df_main.loc[df_main["Data"] == last_date_main].iloc[-1]
+def today_and_ma7(df_daily: pd.DataFrame, fonte_tab: str, canal: str, metrica: str, ref_date: pd.Timestamp):
+    """
+    Devolve (valor_hoje, m7) para a combinação pedida.
+    fonte_tab: "GERAL" (soma das fontes) | "Agências" | "Esegur"
+    canal: "ATM" | "VTM" | "GERAL"
+    metrica: "Ruturas" | "Indisponiveis" | "Anomalias"
+    """
+    if fonte_tab == "GERAL":
+        # soma das fontes
+        df_today = df_daily[(df_daily["Data"] == ref_date) & (df_daily["Canal"] == canal) & (df_daily["Metrica"] == metrica)]
+        v_hoje = float(df_today.groupby("Data")["Valor"].sum().sum())
 
-k1, k2, k3 = st.columns(3)
-for col, metric in zip([k1, k2, k3], ["Ruturas", "Indisponiveis", "Anomalias"]):
-    hoje = float(last_row[metric]) if pd.notna(last_row[metric]) else 0.0
-    media7 = ma7_excluindo_hoje(df_main[metric], last_date_main)
-    if pd.isna(media7):
-        delta_txt = ""
-        delta_color = "off"
+        df_hist = df_daily[(df_daily["Data"] < ref_date) & (df_daily["Canal"] == canal) & (df_daily["Metrica"] == metrica)]
+        s_hist = df_hist.groupby("Data")["Valor"].sum().sort_index()
+        m7 = ma7_from_series(s_hist)
     else:
-        dif = hoje - media7
-        delta_txt = f"{'+' if dif >= 0 else ''}{dif:.0f}"  # apenas +/-N
-        # 'inverse' = verde quando delta <= 0 (melhor), vermelho quando > 0
-        delta_color = "inverse"
-    with col:
-        st.metric(metric, f"{int(hoje)}", delta=delta_txt, delta_color=delta_color)
+        df_today = df_daily[
+            (df_daily["Data"] == ref_date)
+            & (df_daily["Fonte"] == fonte_tab)
+            & (df_daily["Canal"] == canal)
+            & (df_daily["Metrica"] == metrica)
+        ]
+        v_hoje = float(df_today["Valor"].sum())
+
+        df_hist = df_daily[
+            (df_daily["Data"] < ref_date)
+            & (df_daily["Fonte"] == fonte_tab)
+            & (df_daily["Canal"] == canal)
+            & (df_daily["Metrica"] == metrica)
+        ].sort_values("Data")
+        m7 = ma7_from_series(df_hist["Valor"])
+    return v_hoje, m7
+
+def format_delta(v, m):
+    if pd.isna(m):
+        return None
+    d = v - m
+    sign = "+" if d >= 0 else ""
+    return f"{sign}{int(round(d))}"
+
+# --- NOVO: cartão KPI lado a lado (GERAL em destaque + detalhe ATM/VTM) ---
+CARD_CSS = """
+<style>
+.kpi-card {
+  background: #ffffff;
+  border: 1px solid #eee;
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+  height: 100%;
+}
+.kpi-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: #333;
+  margin-bottom: 6px;
+}
+.kpi-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.kpi-main-value {
+  font-size: 32px;
+  font-weight: 700;
+  color: #111;
+  line-height: 1.0;
+}
+.kpi-delta {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f2f4f7;
+  color: #333;
+}
+.kpi-delta.pos { background: #f0f9ff; color: #026aa7; }   /* + */
+.kpi-delta.neg { background: #fff1f1; color: #b42318; }   /* - */
+.kpi-subtitle {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #667085;
+}
+.kpi-detail {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.kpi-chip {
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #344054;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.kpi-chip strong { font-weight: 700; color: #111827; }
+</style>
+"""
+
+st.markdown(CARD_CSS, unsafe_allow_html=True)
+
+def render_kpi_card(title: str, geral_val: float, geral_m7: float,
+                    atm_val: float, atm_m7: float,
+                    vtm_val: float, vtm_m7: float):
+    delta_g = format_delta(geral_val, geral_m7)
+    delta_a = format_delta(atm_val, atm_m7)
+    delta_v = format_delta(vtm_val, vtm_m7)
+    cls_g = "pos" if (delta_g and delta_g.startswith("+")) else ("neg" if delta_g else "")
+    cls_a = "pos" if (delta_a and delta_a.startswith("+")) else ("neg" if delta_a else "")
+    cls_v = "pos" if (delta_v and delta_v.startswith("+")) else ("neg" if delta_v else "")
+
+    html = f"""
+    <div class="kpi-card">
+      <div class="kpi-title">{title} — <span style="color:#0f172a;">GERAL</span></div>
+      <div class="kpi-main">
+        <div class="kpi-main-value">{int(geral_val)}</div>
+        {f'<div class="kpi-delta {cls_g}">{delta_g}</div>' if delta_g else ""}
+      </div>
+      <div class="kpi-subtitle">Detalhe por canal (ATM &amp; VTM)</div>
+      <div class="kpi-detail">
+        <div class="kpi-chip">ATM: <strong>{int(atm_val)}</strong> {f'<span class="kpi-delta {cls_a}">{delta_a}</span>' if delta_a else ''}</div>
+        <div class="kpi-chip">VTM: <strong>{int(vtm_val)}</strong> {f'<span class="kpi-delta {cls_v}">{delta_v}</span>' if delta_v else ''}</div>
+      </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# Evolução diária — linhas limpas; valor só em hover
+# KPIs — Tabs: Geral → Agências → Fornecedores (Esegur)
+# Em cada tab: 3 cartões lado a lado com GERAL como destaque e detalhe ATM/VTM
+# -----------------------------------------------------------------------------
+st.header(f"Indicadores — {last_date.date().isoformat()}")
+
+tab_geral, tab_ag, tab_for = st.tabs([DISPLAY_FONTE["GERAL"], DISPLAY_FONTE["Agências"], DISPLAY_FONTE["Esegur"]])
+
+for tab, fonte_tab in zip([tab_geral, tab_ag, tab_for], ["GERAL", "Agências", "Esegur"]):
+    with tab:
+        # verificar se há dados para o dia em questão
+        if fonte_tab == "GERAL":
+            sub_today = df_daily[(df_daily["Data"] == last_date)]
+        else:
+            sub_today = df_daily[(df_daily["Data"] == last_date) & (df_daily["Fonte"] == fonte_tab)]
+        if sub_today.empty:
+            st.info(f"Sem dados para {DISPLAY_FONTE[fonte_tab]} no dia {last_date.date().isoformat()}.")
+            continue
+
+        cols_row = st.columns(3)
+        for col, metrica in zip(cols_row, ["Ruturas","Indisponiveis","Anomalias"]):
+            # valores GERAL, ATM, VTM + MA7
+            v_g, m7_g = today_and_ma7(df_daily, fonte_tab, "GERAL", metrica, last_date)
+            v_a, m7_a = today_and_ma7(df_daily, fonte_tab, "ATM",   metrica, last_date)
+            v_v, m7_v = today_and_ma7(df_daily, fonte_tab, "VTM",   metrica, last_date)
+            with col:
+                render_kpi_card(metrica, v_g, m7_g, v_a, m7_a, v_v, m7_v)
+
+        st.markdown("---")
+
+# -----------------------------------------------------------------------------
+# Evolução diária — escolher Fonte (Geral/Agências/Fornecedores) e Métrica,
+# mostrar três linhas: ATM, VTM e GERAL (ATM+VTM)
 # -----------------------------------------------------------------------------
 st.header("Evolução diária")
+fonte_sel_label = st.radio("Fonte", [DISPLAY_FONTE["GERAL"], DISPLAY_FONTE["Agências"], DISPLAY_FONTE["Esegur"]],
+                           horizontal=True, index=0)
+# map back to internal labels
+label_to_internal = {v: k for k, v in DISPLAY_FONTE.items()}
+fonte_sel = label_to_internal[fonte_sel_label]
+met_sel = st.selectbox("Métrica", ["Ruturas","Indisponiveis","Anomalias"], index=0)
 
-df_chart = df_main.melt(
-    id_vars=["Data"],
-    value_vars=["Ruturas", "Indisponiveis", "Anomalias"],
-    var_name="Categoria",
-    value_name="Valor"
-)
-
-hover = alt.selection_point(fields=["Data", "Categoria"], nearest=True, on="mouseover", empty="none")
-
-base = alt.Chart(df_chart).encode(
-    x=alt.X("Data:T", title="Data", axis=alt.Axis(format="%Y-%m-%d")),
-    y=alt.Y("Valor:Q", title="Valor"),
-    color=alt.Color("Categoria:N", legend=alt.Legend(title=None))
-)
-
-lines = base.mark_line(strokeWidth=2)
-points_on_hover = base.mark_point(size=60).transform_filter(hover)
-
-chart = (lines + points_on_hover).encode(
-    tooltip=[
-        alt.Tooltip("Data:T", title="Data", format="%Y-%m-%d"),
-        alt.Tooltip("Categoria:N", title="Série"),
-        alt.Tooltip("Valor:Q", title="Valor", format=".0f")
+# Construir dados incluindo GERAL
+if fonte_sel == "GERAL":
+    # soma das fontes; queremos ATM, VTM e GERAL
+    df_chart_base = df_daily[(df_daily["Metrica"] == met_sel) & (df_daily["Canal"].isin(["ATM","VTM","GERAL"]))]
+    df_chart = df_chart_base.groupby(["Data","Canal"], as_index=False)["Valor"].sum()
+else:
+    df_chart = df_daily[
+        (df_daily["Fonte"] == fonte_sel)
+        & (df_daily["Metrica"] == met_sel)
+        & (df_daily["Canal"].isin(["ATM","VTM","GERAL"]))
     ]
-).add_params(hover).properties(height=340)
 
-st.altair_chart(chart, use_container_width=True)
+if df_chart.empty:
+    st.info("Sem dados para o filtro escolhido.")
+else:
+    chart = (
+        alt.Chart(df_chart)
+        .mark_line(strokeWidth=2)
+        .encode(
+            x=alt.X("Data:T", title="Data", axis=alt.Axis(format="%Y-%m-%d")),
+            y=alt.Y("Valor:Q", title="Valor"),
+            color=alt.Color("Canal:N", title=None, scale=alt.Scale(scheme="category10")),
+            tooltip=[alt.Tooltip("Data:T", title="Data", format="%Y-%m-%d"),
+                     alt.Tooltip("Canal:N", title="Canal"),
+                     alt.Tooltip("Valor:Q", title=met_sel, format=".0f")]
+        ).properties(height=340)
+    )
+    st.altair_chart(chart, use_container_width=True)
 
 # -----------------------------------------------------------------------------
-# JUSTIFICAÇÕES — Destaque selecionável + Acumulado por período (exclui "Sem justificação")
+# JUSTIFICAÇÕES — Matriz diária (geral) + Split por Fonte (via registos)
 # -----------------------------------------------------------------------------
 st.header("Justificações")
 
+# 1) Matriz diária (geral)
 if df_just is None or df_just.empty:
-    st.info("Sem dados de justificações.")
+    st.info("Sem dados de justificações (matriz diária).")
 else:
-    # ---------------------------
-    # Destaque de uma categoria (um único KPI com delta por baixo do valor)
-    # ---------------------------
-    categorias = [c for c in df_just.columns if c != "Data"]
-    default_cat = find_sem_just_col(categorias) or (categorias[0] if categorias else None)
+    sem_col_candidates = [c for c in df_just.columns if normalize_text_pt(c).startswith("sem justific")]
+    sem_col = sem_col_candidates[0] if sem_col_candidates else None
 
-    st.subheader("Destaque de uma categoria")
-    selected_cat = st.selectbox(
-        "Seleciona a categoria para analisar",
-        options=categorias,
-        index=categorias.index(default_cat) if default_cat in categorias else 0
-    )
-
-    def ma7_cat_excl_hoje(dfj: pd.DataFrame, cat: str, ref_date: pd.Timestamp) -> float:
-        hist = dfj.loc[dfj["Data"] < ref_date, cat]
-        return float(hist.tail(7).mean()) if not hist.empty else float("nan")
-
-    if selected_cat:
+    # Top 2 do último dia (exclui 'Sem justificação')
+    st.subheader("Top 2 — último dia (geral)")
+    if "Data" in df_just.columns:
         last_date_just = df_just["Data"].max()
-        df_last_sel = df_just[df_just["Data"] == last_date_just].copy()
-        last_val = int(float(df_last_sel[selected_cat].iloc[0])) if not df_last_sel.empty else 0
-        ma7_sel = ma7_cat_excl_hoje(df_just, selected_cat, last_date_just)
-        dif = None if pd.isna(ma7_sel) else (last_val - ma7_sel)
+        df_last = df_just[df_just["Data"] == last_date_just].copy()
+        cand_cols = [c for c in df_last.columns if c != "Data" and c != sem_col]
+        if df_last.empty or not cand_cols:
+            st.info("Sem dados de justificações para o último dia.")
+        else:
+            s_vals = df_last[cand_cols].iloc[0].astype(float)
+            top2 = s_vals.sort_values(ascending=False).head(2)
+            colA, colB = st.columns(2)
+            with colA:
+                st.metric(top2.index[0], int(top2.iloc[0]))
+            with colB:
+                if len(top2) > 1:
+                    st.metric(top2.index[1], int(top2.iloc[1]))
+            with st.expander("Ver todas as categorias (último dia)"):
+                st.dataframe(
+                    s_vals.sort_values(ascending=False).reset_index().rename(columns={"index":"Categoria",0:"Valor"}),
+                    use_container_width=True, hide_index=True
+                )
 
-        cols_sem = st.columns(2)
-        with cols_sem[0]:
-            st.metric(
-                f"{selected_cat} (dia {last_date_just.date().isoformat()})",
-                last_val,
-                delta=(f"{'+' if dif >= 0 else ''}{int(dif)}" if dif is not None else None),
-                delta_color="inverse" if dif is not None else "off"
-            )
-        with cols_sem[1]:
-            st.write("")  # vazio propositado para manter o layout
-
-        # Série diária da categoria selecionada
-        st.markdown(f"Distribuição diária de '{selected_cat}'")
-        c_daily = (
-            alt.Chart(df_just.rename(columns={selected_cat: "ValorSel"}))
-            .mark_bar(color="#004B87")
-            .encode(
-                x=alt.X("Data:T", title="Data", axis=alt.Axis(format="%Y-%m-%d")),
-                y=alt.Y("ValorSel:Q", title="Contagem"),
-                tooltip=[alt.Tooltip("Data:T", title="Data", format="%Y-%m-%d"),
-                         alt.Tooltip("ValorSel:Q", title=selected_cat)]
-            ).properties(height=220)
-        )
-        st.altair_chart(c_daily, use_container_width=True)
-
-    st.markdown("---")
-
-    # ---------------------------
-    # Justificações do último dia — Top 2 (exceto "Sem justificação"), resto oculto
-    # ---------------------------
-    st.subheader("Top 2 - Justificações")
-
-    last_date_just = df_just["Data"].max()
-    df_last = df_just[df_just["Data"] == last_date_just].copy()
-
-    # Excluir 'Data' e 'Sem justificação' da seleção
-    sem_col = find_sem_just_col(df_just.columns)
-    cand_cols = [c for c in df_last.columns if c != "Data" and c != sem_col]
-
-    def ma7_cat(cat: str) -> float:
-        hist = df_just.loc[df_just["Data"] < last_date_just, cat]
-        return float(hist.tail(7).mean()) if not hist.empty else float("nan")
-
-    if df_last.empty or not cand_cols:
-        st.info("Sem dados de justificações para o último dia.")
-    else:
-        s_vals = df_last[cand_cols].iloc[0].astype(float)
-        top2 = s_vals.sort_values(ascending=False).head(2)
-
-        colA, colB = st.columns(2)
-        for col, cat in zip([colA, colB], top2.index.tolist()):
-            val = int(top2[cat])
-            ma7_val = ma7_cat(cat)
-            if pd.isna(ma7_val):
-                delta_txt = None
-                delta_color = "off"
-            else:
-                dif = val - ma7_val
-                delta_txt = f"{'+' if dif >= 0 else ''}{int(dif)}"
-                delta_color = "inverse"  # verde se <=0, vermelho se >0
-            with col:
-                st.metric(cat, val, delta=delta_txt, delta_color=delta_color)
-
-        with st.expander("Ver todas as categorias do último dia (detalhe)"):
-            s_all = df_last[[c for c in df_last.columns if c != "Data"]].iloc[0].astype(float).sort_values(ascending=False)
-            df_table = s_all.reset_index()
-            df_table.columns = ["Categoria", "Valor"]
-            st.dataframe(df_table, use_container_width=True, hide_index=True)
-
-    # ---------------------------
-    # Acumulado das justificações (período) — excluir "Sem justificação"
-    # ---------------------------
-    st.subheader("Acumulado das justificações (período)")
-    periodo = st.selectbox("Período", ["1 semana", "Mês", "Ano", "1-3 Anos"], index=1)
+    # Acumulado por período (geral)
+    st.subheader("Acumulado por período (geral)")
+    periodo = st.selectbox("Período", ["1 semana", "Mês", "Ano", "1-3 Anos"], index=1, key="per_just")
     days_map = {"1 semana": 7, "Mês": 30, "Ano": 365, "1-3 Anos": 365*3}
     dias = days_map[periodo]
-    end_date = df_just["Data"].max().normalize()
-    start_date = end_date - pd.Timedelta(days=dias-1)
-    dfj_win = df_just[(df_just["Data"] >= start_date) & (df_just["Data"] <= end_date)].copy()
+    if "Data" in df_just.columns:
+        end_date = df_just["Data"].max().normalize()
+        start_date = end_date - pd.Timedelta(days=dias-1)
+        dfj_win = df_just[(df_just["Data"] >= start_date) & (df_just["Data"] <= end_date)].copy()
+        st.caption(f"Período: {start_date.date().isoformat()} a {end_date.date().isoformat()} ({periodo})")
+    else:
+        dfj_win = df_just.copy()
+        st.caption("Período não disponível")
 
-    sem_col = find_sem_just_col(dfj_win.columns)
-    cols_sum = [c for c in dfj_win.columns if c != "Data" and (c != sem_col)]
+    cols_sum = [c for c in dfj_win.columns if c != "Data" and c != sem_col]
     total_just = dfj_win[cols_sum].sum().sort_values(ascending=False)
-
-    st.caption(f"Período: {start_date.date().isoformat()} a {end_date.date().isoformat()} ({periodo})")
     st.bar_chart(total_just)
 
-# -----------------------------------------------------------------------------
-# Rutura por hora do dia — desde sempre, todas as justificações, apenas linha
-# -----------------------------------------------------------------------------
-# -----------------------------------------------------------------------------
-# Rutura por hora do dia — desde sempre, todas as justificações, apenas linha
-# -----------------------------------------------------------------------------
-st.header("Rutura por hora do dia")
+# 2) Split por Fonte (via registos detalhados)
+st.subheader("Justificações por Fonte (registos detalhados)")
 
-if (df_events is None) or df_events.empty or (("Hora" not in df_events.columns) and ("Hora_int" not in df_events.columns)):
-    st.info("Sem registos detalhados com hora para calcular o gráfico por hora.")
+if (df_events is None) or df_events.empty or ("Justificacao" not in df_events.columns):
+    st.info("Sem registos detalhados para calcular este split.")
 else:
-    # Garantir Hora_int
-    if "Hora_int" not in df_events.columns:
-        hora_dt = pd.to_datetime(df_events["Hora"], errors="coerce", format="%H:%M:%S")
-        bad = hora_dt.isna() & df_events["Hora"].notna()
-        if bad.any():
-            hora_dt.loc[bad] = pd.to_datetime("1900-01-01 " + df_events.loc[bad, "Hora"].astype(str), errors="coerce")
-        df_events["Hora_int"] = hora_dt.dt.hour
+    col1, col2 = st.columns(2)
+    with col1:
+        periodo_ev = st.selectbox("Período", ["Tudo", "1 semana", "Mês", "Ano", "1-3 Anos"], index=2, key="per_ev")
+    with col2:
+        excluir_sem = st.checkbox("Excluir 'Sem justificação'", value=True)
 
-    # Contagem por hora 0..23 (desde sempre; todas as justificações)
-    contagem = (
-        df_events.dropna(subset=["Hora_int"])
-                 .assign(Hora=df_events["Hora_int"].astype(int))
-                 .groupby("Hora", as_index=False)
-                 .size()
-                 .rename(columns={"size": "Ocorrencias"})
+    def filtro_periodo(df, periodo_label: str):
+        days_map2 = {"1 semana": 7, "Mês": 30, "Ano": 365, "1-3 Anos": 365*3, "Tudo": None}
+        dias2 = days_map2[periodo_label]
+        if (dias2 is None) or ("Data" not in df.columns) or (df["Data"].dropna().empty):
+            return df
+        end_d = df["Data"].max().normalize()
+        start_d = end_d - pd.Timedelta(days=dias2-1)
+        return df[(df["Data"] >= start_d) & (df["Data"] <= end_d)].copy()
+
+    ev = filtro_periodo(df_events.copy(), periodo_ev)
+    if excluir_sem and "Justificacao" in ev.columns:
+        # CORREÇÃO ROBUSTA AO ERRO KeyError: True
+        ev = ev[~ev["Justificacao"].astype(str).fillna("").apply(normalize_text_pt).eq("sem justificacao")]
+
+    top_by_fonte = (
+        ev.groupby(["Fonte","Justificacao"], dropna=False).size()
+          .rename("Ocorrencias").reset_index()
     )
 
-    # garantir ticks 0..24 (duplicamos o último valor em 24 para fechar o eixo)
-    horas_full = pd.DataFrame({"Hora": list(range(24))})
-    contagem = horas_full.merge(contagem, on="Hora", how="left").fillna({"Ocorrencias": 0})
-    contagem["Ocorrencias"] = contagem["Ocorrencias"].astype(int)
-    contagem_full = contagem.copy()
-    contagem_full.loc[len(contagem_full)] = [24, contagem_full["Ocorrencias"].iloc[-1]]
-
-    # Apenas linha (sem barras) + labels do eixo X em 90º (verticais)
-    line = (
-        alt.Chart(contagem_full)
-        .mark_line(color="#1F4E79", strokeWidth=2)
-        .encode(
-            x=alt.X(
-                "Hora:O",
-                title="Hora",
-                axis=alt.Axis(labelAngle=0)  # <- VERTICAL (90º)
-            ),
-            y=alt.Y("Ocorrencias:Q", title="Ocorrências"),
-            tooltip=[
-                alt.Tooltip("Hora:O", title="Hora"),
-                alt.Tooltip("Ocorrencias:Q", title="Ocorrências")
-            ],
-        )
-        .properties(height=300)
-    )
-    st.altair_chart(line, use_container_width=True)
+    cA, cB = st.columns(2)
+    for fonte_internal, col in zip(["Agências","Esegur"], [cA, cB]):
+        sub = (top_by_fonte[top_by_fonte["Fonte"]==fonte_internal]
+               .sort_values("Ocorrencias", ascending=False).head(10))
+        with col:
+            st.markdown(f"**{DISPLAY_FONTE[fonte_internal]}** — Top justificações")
+            chart = (
+                alt.Chart(sub)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Ocorrencias:Q", title="Ocorrências"),
+                    y=alt.Y("Justificacao:N", title=None, sort="-x"),
+                    tooltip=["Justificacao:N", alt.Tooltip("Ocorrencias:Q", title="Ocorrências")]
+                ).properties(height=280)
+            )
+            st.altair_chart(chart, use_container_width=True)
+            with st.expander("Ver tabela"):
+                st.dataframe(sub, use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# Top 5 piores agências (nº de ocorrências) — mantido
+# Top 5 piores agências (nº de ocorrências) — exclui Fornecedores (Esegur)
 # -----------------------------------------------------------------------------
 st.header("Top 5 piores agências (nº de ocorrências)")
 
-if (df_events is None) or df_events.empty or ("Agencia" not in df_events.columns):
-    st.info("Sem registos detalhados com 'Agencia' para calcular o ranking.")
+if (df_events is None) or df_events.empty or ("AgenciaEmpresa" not in df_events.columns):
+    st.info("Sem registos detalhados com 'AgenciaEmpresa'.")
 else:
     col_t1, col_t2 = st.columns(2)
     with col_t1:
@@ -465,101 +556,82 @@ else:
         just_opts2 = ["Todas"] + sorted([j for j in df_events["Justificacao"].dropna().unique()]) if "Justificacao" in df_events.columns else ["Todas"]
         just_sel2 = st.selectbox("Justificação", just_opts2, index=0, key="just_top")
 
-    def filtro_periodo(df, col_data: str, periodo_label: str):
+    def filtro_periodo(df, periodo_label: str):
         days_map = {"1 semana": 7, "Mês": 30, "Ano": 365, "1-3 Anos": 365*3, "Tudo": None}
         dias = days_map[periodo_label]
-        if dias is None:
+        if dias is None or "Data" not in df.columns or df["Data"].dropna().empty:
             return df
-        end_date = df[col_data].max().normalize()
+        end_date = df["Data"].max().normalize()
         start_date = end_date - pd.Timedelta(days=dias-1)
-        return df[(df[col_data] >= start_date) & (df[col_data] <= end_date)].copy()
+        return df[(df["Data"] >= start_date) & (df["Data"] <= end_date)].copy()
 
     top_df = df_events.copy()
-    if "Data" in top_df.columns:
-        top_df = filtro_periodo(top_df, "Data", periodo_top)
+    # Excluir Fornecedores (Esegur)
+    top_df = top_df[top_df["Fonte"] == "Agências"]
+    top_df = filtro_periodo(top_df, periodo_top)
     if just_sel2 != "Todas" and "Justificacao" in top_df.columns:
         top_df = top_df[top_df["Justificacao"] == just_sel2]
 
-    topN = (
-        top_df.dropna(subset=["Agencia"])
-              .groupby("Agencia", dropna=False)
-              .size()
-              .sort_values(ascending=False)
-              .head(5)
-              .rename("Ocorrencias")
-              .reset_index()
-    )
-
-    chart_top = (
-        alt.Chart(topN)
-        .mark_bar(color="#E76F51")
-        .encode(
-            x=alt.X("Ocorrencias:Q", title="Ocorrências"),
-            y=alt.Y("Agencia:N", title="Agência", sort="-x"),
-            tooltip=["Agencia:N", alt.Tooltip("Ocorrencias:Q", title="Ocorrências")]
+    if top_df.empty:
+        st.info("Sem dados para o filtro selecionado.")
+    else:
+        topN = (
+            top_df.dropna(subset=["AgenciaEmpresa"])
+                  .groupby("AgenciaEmpresa", dropna=False)
+                  .size()
+                  .sort_values(ascending=False)
+                  .head(5)
+                  .rename("Ocorrencias")
+                  .reset_index()
         )
-        .properties(height=240)
-    )
-    labels = (
-        alt.Chart(topN)
-        .mark_text(align="left", dx=4, color="#333")
-        .encode(x="Ocorrencias:Q", y=alt.Y("Agencia:N", sort="-x"), text="Ocorrencias:Q")
-    )
-    st.altair_chart((chart_top + labels), use_container_width=True)
-    with st.expander("Ver tabela"):
-        st.dataframe(topN, use_container_width=True, hide_index=True)
+
+        chart_top = (
+            alt.Chart(topN)
+            .mark_bar(color="#E76F51")
+            .encode(
+                x=alt.X("Ocorrencias:Q", title="Ocorrências"),
+                y=alt.Y("AgenciaEmpresa:N", title="Agência", sort="-x"),
+                tooltip=["AgenciaEmpresa:N", alt.Tooltip("Ocorrencias:Q", title="Ocorrências")]
+            ).properties(height=240)
+        )
+        labels = (
+            alt.Chart(topN)
+            .mark_text(align="left", dx=4, color="#333")
+            .encode(x="Ocorrencias:Q", y=alt.Y("AgenciaEmpresa:N", sort="-x"), text="Ocorrencias:Q")
+        )
+        st.altair_chart((chart_top + labels), use_container_width=True)
+        with st.expander("Ver tabela"):
+            st.dataframe(topN, use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# Recomendações de decisão (bullet points)
+# Recomendações (bullet points)
 # -----------------------------------------------------------------------------
 st.header("Recomendações")
 
 try:
     recs = []
+    # 1) KPI vs MA7 para cada Fonte no GERAL (ATM+VTM somados)
+    last_rows = df_daily[(df_daily["Data"] == last_date) & (df_daily["Canal"] == "GERAL")]
+    for fonte in ["Agências","Esegur"]:
+        for metrica in ["Ruturas","Indisponiveis","Anomalias"]:
+            hoje = float(last_rows.loc[(last_rows["Fonte"] == fonte) & (last_rows["Metrica"] == metrica), "Valor"].sum())
+            hist = df_daily[(df_daily["Fonte"] == fonte) & (df_daily["Canal"] == "GERAL") & (df_daily["Metrica"] == metrica)]
+            media7 = ma7_from_series(hist.loc[hist["Data"] < last_date, "Valor"])
+            if not pd.isna(media7):
+                if hoje > media7:
+                    recs.append(f"**{DISPLAY_FONTE[fonte]} — {metrica}** acima da M7 ({int(hoje)} vs {int(round(media7))}). Reforçar diagnóstico e mitigação.")
+                else:
+                    recs.append(f"**{DISPLAY_FONTE[fonte]} — {metrica}** ≤ M7 ({int(hoje)} ≤ {int(round(media7))}). Manter práticas e monitorizar.")
 
-    # 1) KPI vs MA7
-    for metric in ["Ruturas", "Indisponiveis", "Anomalias"]:
-        hoje = float(last_row[metric]) if pd.notna(last_row[metric]) else 0.0
-        media7 = ma7_excluindo_hoje(df_main[metric], last_date_main)
-        if not pd.isna(media7):
-            if hoje > media7:
-                recs.append(f"**{metric}** acima da média 7 dias ({int(hoje)} vs {int(round(media7))}). "
-                            f"Reforçar recursos/diagnóstico root-cause para reduzir {metric.lower()} nos próximos dias.")
-            else:
-                recs.append(f"**{metric}** abaixo ou em linha com a média 7 dias ({int(hoje)} ≤ {int(round(media7))}). "
-                            f"Manter práticas atuais e monitorizar.")
-
-    # 2) Hora de pico (desde sempre)
-    if (df_events is not None) and ("Hora_int" in df_events.columns):
-        cont = (df_events.dropna(subset=["Hora_int"])
-                         .assign(Hora=df_events["Hora_int"].astype(int))
-                         .groupby("Hora").size().sort_values(ascending=False))
-        if not cont.empty:
-            hora_pico = int(cont.index[0])
-            vol_pico = int(cont.iloc[0])
-            recs.append(f"**Hora de pico**: {hora_pico:02d}h (≈ {vol_pico} ocorrências). "
-                        f"Alocar equipa técnica/abastecimento preventivo antes deste período e reforçar monitorização entre "
-                        f"**{hora_pico:02d}:00–{(hora_pico+1)%24:02d}:00**.")
-
-    # 3) Categoria mais incidente (exclui 'Sem justificação')
-    if (df_just is not None) and (not df_just.empty):
-        sem_col = find_sem_just_col(df_just.columns)
-        cats = [c for c in df_just.columns if c not in ["Data", sem_col]]
-        if cats:
-            tot = df_just[cats].sum().sort_values(ascending=False)
-            if not tot.empty:
-                top_cat = tot.index[0]
-                recs.append(f"**Categoria mais incidente**: _{top_cat}_. Priorizar ações específicas (procedimentos, formação, manutenção preventiva).")
-
-    # 4) Top 3 agências
-    if (df_events is not None) and ("Agencia" in df_events.columns):
-        worst = (df_events.dropna(subset=["Agencia"])
-                           .groupby("Agencia").size()
-                           .sort_values(ascending=False).head(3))
-        if not worst.empty:
-            lista = "; ".join([f"{ag} ({int(cnt)})" for ag, cnt in worst.items()])
-            recs.append(f"**Agências com pior desempenho (Top 3)**: {lista}. "
-                        f"Agendar **visita técnica** e plano de ação dedicado a cada uma.")
+    # 2) Categoria mais incidente por Fonte (registos detalhados)
+    if (df_events is not None) and ("Justificacao" in df_events.columns):
+        for fonte in ["Agências","Esegur"]:
+            sub = df_events[df_events["Fonte"] == fonte]
+            if not sub.empty:
+                s = sub.groupby("Justificacao").size().sort_values(ascending=False)
+                if not s.empty:
+                    top_cat = s.index[0]
+                    recs.append(f"**{DISPLAY_FONTE[fonte]} — Justificação principal**: _{top_cat}_. Endereçar ações (processo, formação, manutenção).")
 
     if recs:
         st.markdown("\n".join(f"- {r}" for r in recs))
@@ -573,13 +645,17 @@ except Exception as e:
 # Downloads
 # -----------------------------------------------------------------------------
 st.header("Download dos dados")
-csv_main = df_main.to_csv(index=False, sep=";").encode("utf-8-sig")
-st.download_button("Baixar CSV (tabela principal)", csv_main, file_name="ruturas_principal.csv", mime="text/csv")
 
+# Tabela diária normalizada (Fonte x Canal x Métrica)
+csv_daily = df_daily.sort_values(["Data","Fonte","Canal","Metrica"]).to_csv(index=False, sep=";").encode("utf-8-sig")
+st.download_button("Baixar CSV (diário — Fonte/Canal/Métrica)", csv_daily, file_name="ruturas_diario_fonte_canal.csv", mime="text/csv")
+
+# Justificações (matriz diária)
 if (df_just is not None) and (not df_just.empty):
     csv_just = df_just.to_csv(index=False, sep=";").encode("utf-8-sig")
-    st.download_button("Baixar CSV (justificações)", csv_just, file_name="ruturas_justificacoes.csv", mime="text/csv")
+    st.download_button("Baixar CSV (justificações — matriz)", csv_just, file_name="ruturas_justificacoes_matriz.csv", mime="text/csv")
 
+# Registos detalhados normalizados
 if (df_events is not None) and (not df_events.empty):
     csv_ev = df_events.to_csv(index=False, sep=";").encode("utf-8-sig")
-    st.download_button("Baixar CSV (registos detalhados)", csv_ev, file_name="ruturas_registos.csv", mime="text/csv")
+    st.download_button("Baixar CSV (registos detalhados)", csv_ev, file_name="ruturas_registos_detalhados.csv", mime="text/csv")
